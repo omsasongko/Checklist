@@ -36,10 +36,15 @@ $dayNames = [1 => 'Senin', 2 => 'Selasa', 3 => 'Rabu', 4 => 'Kamis', 5 => 'Jumat
 // has a schedule and the submission would replace or extend it.
 $confirm = $pendingConfirmation ?? null;
 $confirmExisting = is_array($confirm['existing'] ?? null) ? $confirm['existing'] : null;
+$confirmExistingPlans = is_array($confirm['existing_plans'] ?? null) ? $confirm['existing_plans'] : [];
+if ($confirmExistingPlans === [] && $confirmExisting !== null) {
+    $confirmExistingPlans = [$confirmExisting];
+}
 $confirmProposed = is_array($confirm['proposed'] ?? null) ? $confirm['proposed'] : null;
 $confirmOperations = is_array($confirm['operations'] ?? null) ? $confirm['operations'] : [];
 $canReplace = (bool) ($confirmOperations['replace'] ?? false);
 $canAddSession = (bool) ($confirmOperations['add_session'] ?? false);
+$addSessionDisabledReason = (string) ($confirm['add_session_disabled_reason'] ?? 'Kebijakan aktivitas ini tidak mengizinkan jadwal tambahan.');
 
 $formatWindow = static function (?string $start, ?string $end): string {
     return ($start ? substr($start, 0, 5) : '--:--') . ' - ' . ($end ? substr($end, 0, 5) : '--:--');
@@ -78,6 +83,7 @@ $formatWindow = static function (?string $start, ?string $end): string {
                               // overwrites an existing schedule on its own. ?>
                         <input type="hidden" name="operation" value="<?= esc(\App\Services\ActivityScheduleService::OPERATION_CREATE) ?>">
                         <input type="hidden" name="confirm_plan_id" value="">
+                        <input type="hidden" name="confirm_plan_updated_at" value="">
                     <?php endif; ?>
 
                     <div class="mb-3">
@@ -273,7 +279,8 @@ $formatWindow = static function (?string $start, ?string $end): string {
 <?php if ($confirmExisting !== null && $confirmProposed !== null): ?>
     <div class="modal fade" id="lq-plan-confirm-modal" tabindex="-1" aria-labelledby="lq-plan-confirm-title" aria-hidden="true"
          data-lq-autoshow="1"
-         data-existing-plan-id="<?= (int) ($confirmExisting['plan_id'] ?? 0) ?>">
+         data-existing-plan-count="<?= count($confirmExistingPlans) ?>"
+         <?php if (count($confirmExistingPlans) === 1): ?>data-existing-plan-id="<?= (int) ($confirmExistingPlans[0]['plan_id'] ?? 0) ?>"<?php endif; ?>>
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content lq-card">
                 <div class="modal-header lq-card-header">
@@ -284,21 +291,34 @@ $formatWindow = static function (?string $start, ?string $end): string {
                 </div>
                 <div class="modal-body p-4">
                     <p class="text-muted">
-                        Aktivitas ini sudah memiliki jadwal. Apakah Anda ingin mengganti jadwal lama atau menambahkan sesi baru?
+                        Aktivitas ini sudah memiliki jadwal. Apakah Anda ingin menambahkan jadwal baru, mengganti jadwal lama, atau membatalkan?
                     </p>
 
-                    <div class="row g-3 mb-3">
+                    <fieldset class="mb-3">
+                        <legend class="h6 fw-bold">Pilih jadwal yang akan diganti</legend>
+                        <div class="row g-3">
+                        <?php foreach ($confirmExistingPlans as $index => $existingPlan): ?>
                         <div class="col-md-6">
                             <div class="lq-confirm-panel h-100">
-                                <div class="lq-eyebrow mb-2"><i class="bi bi-clock-history me-1"></i>Jadwal Saat Ini</div>
-                                <div class="fw-semibold mb-1"><?= esc($confirmExisting['activity_name'] ?? '') ?></div>
+                                <div class="form-check">
+                                    <input class="form-check-input js-plan-replacement-target" type="radio" name="replacement_target" id="replacement-target-<?= (int) ($existingPlan['plan_id'] ?? 0) ?>" value="<?= (int) ($existingPlan['plan_id'] ?? 0) ?>" data-updated-at="<?= esc($existingPlan['updated_at'] ?? '') ?>">
+                                    <label class="form-check-label w-100" for="replacement-target-<?= (int) ($existingPlan['plan_id'] ?? 0) ?>">
+                                <div class="lq-eyebrow mb-2"><i class="bi bi-clock-history me-1"></i>Jadwal Saat Ini<?= count($confirmExistingPlans) > 1 ? ' #' . ($index + 1) : '' ?></div>
+                                <div class="fw-semibold mb-1"><?= esc($existingPlan['activity_name'] ?? '') ?></div>
                                 <ul class="list-unstyled small mb-0 lq-meta">
-                                    <li><i class="bi bi-arrow-repeat me-1"></i><?= esc($confirmExisting['recurrence_label'] ?? '') ?></li>
-                                    <li><i class="bi bi-clock me-1"></i><?= esc($formatWindow($confirmExisting['preferred_start_time'] ?? null, $confirmExisting['preferred_end_time'] ?? null)) ?></li>
-                                    <li><i class="bi bi-globe2 me-1"></i><?= esc($confirmExisting['timezone'] ?? '') ?></li>
+                                    <li><i class="bi bi-arrow-repeat me-1"></i><?= esc($existingPlan['recurrence_label'] ?? '') ?></li>
+                                    <li><i class="bi bi-clock me-1"></i><?= esc($formatWindow($existingPlan['preferred_start_time'] ?? null, $existingPlan['preferred_end_time'] ?? null)) ?></li>
+                                    <li><i class="bi bi-globe2 me-1"></i><?= esc($existingPlan['timezone'] ?? '') ?></li>
+                                    <li><i class="bi bi-toggle-on me-1"></i><?= (int) ($existingPlan['is_enabled'] ?? 0) === 1 ? 'Aktif' : 'Nonaktif' ?></li>
                                 </ul>
+                                    </label>
+                                </div>
                             </div>
                         </div>
+                        <?php endforeach; ?>
+                        </div>
+                    </fieldset>
+                    <div class="row g-3 mb-3">
                         <div class="col-md-6">
                             <div class="lq-confirm-panel h-100">
                                 <div class="lq-eyebrow mb-2"><i class="bi bi-calendar-plus me-1"></i>Jadwal Baru</div>
@@ -318,9 +338,7 @@ $formatWindow = static function (?string $start, ?string $end): string {
                             <?php if ($canReplace): ?>
                                 <li><strong>Ganti Jadwal</strong> mengubah jam jadwal yang sudah ada. Riwayat penyelesaian aktivitas Anda tetap tersimpan.</li>
                             <?php endif; ?>
-                            <?php if ($canAddSession): ?>
-                                <li><strong>Tambah Sesi</strong> mempertahankan jadwal lama dan menambahkan sesi baru pada jam tersebut.</li>
-                            <?php endif; ?>
+                            <li><strong>Tambah Jadwal</strong> mempertahankan jadwal lama dan menambahkan jadwal lain<?php if (! $canAddSession): ?>. Tidak tersedia: <?= esc($addSessionDisabledReason) ?><?php else: ?> pada jam yang diajukan.<?php endif; ?></li>
                             <li><strong>Batal</strong> menutup dialog ini tanpa mengubah apa pun. Pilihan ini adalah pilihan bawaan.</li>
                         </ul>
                     </div>
@@ -329,13 +347,11 @@ $formatWindow = static function (?string $start, ?string $end): string {
                     <button type="button" class="btn btn-outline-light order-sm-1" data-bs-dismiss="modal" id="lq-plan-confirm-cancel">
                         <i class="bi bi-x-lg me-1"></i>Batal
                     </button>
-                    <?php if ($canAddSession): ?>
-                        <button type="button" class="btn btn-outline-primary order-sm-2" data-lq-plan-choice="add">
-                            <i class="bi bi-plus-lg me-1"></i>Tambah Sesi
-                        </button>
-                    <?php endif; ?>
+                    <button type="button" class="btn btn-outline-primary order-sm-2" data-lq-plan-choice="add" <?= $canAddSession ? '' : 'disabled aria-disabled="true"' ?> title="<?= esc($canAddSession ? '' : $addSessionDisabledReason) ?>">
+                        <i class="bi bi-plus-lg me-1"></i>Tambah Jadwal
+                    </button>
                     <?php if ($canReplace): ?>
-                        <button type="button" class="btn btn-primary order-sm-3" data-lq-plan-choice="replace">
+                        <button type="button" class="btn btn-primary order-sm-3" data-lq-plan-choice="replace" disabled aria-disabled="true">
                             <i class="bi bi-arrow-repeat me-1"></i>Ganti Jadwal
                         </button>
                     <?php endif; ?>

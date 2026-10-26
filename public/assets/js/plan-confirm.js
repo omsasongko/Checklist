@@ -41,8 +41,22 @@
         }
 
         var planForm = form;
-        var existingPlanId = modalEl.getAttribute('data-existing-plan-id') || '';
         var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        var targetField = planForm.querySelector('input[name="confirm_plan_id"]');
+        var updatedAtField = planForm.querySelector('input[name="confirm_plan_updated_at"]');
+        var replaceButton = modalEl.querySelector('[data-lq-plan-choice="replace"]');
+        var submitted = false;
+
+        each(modalEl.querySelectorAll('.js-plan-replacement-target'), function (radio) {
+            radio.addEventListener('change', function () {
+                if (targetField) targetField.value = radio.value;
+                if (updatedAtField) updatedAtField.value = radio.getAttribute('data-updated-at') || '';
+                if (replaceButton) {
+                    replaceButton.disabled = false;
+                    replaceButton.removeAttribute('aria-disabled');
+                }
+            });
+        });
 
         // Default action is Cancel: pressing Escape or clicking the backdrop
         // simply closes the dialog, and the choice fields stay untouched.
@@ -51,11 +65,15 @@
                 var choice = button.getAttribute('data-lq-plan-choice');
 
                 if (choice === 'replace') {
-                    setChoice(planForm, 'REPLACE', existingPlanId);
+                    if (!targetField || !targetField.value || submitted) return;
+                    setChoice(planForm, 'REPLACE', targetField.value);
                 } else if (choice === 'add') {
+                    if (submitted) return;
                     setChoice(planForm, 'ADD_SESSION', '');
                 }
 
+                submitted = true;
+                each(modalEl.querySelectorAll('[data-lq-plan-choice]'), function (action) { action.disabled = true; });
                 modal.hide();
                 planForm.submit();
             });

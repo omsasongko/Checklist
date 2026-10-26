@@ -57,6 +57,7 @@ class ActivityPlans extends BaseController
                 'activity_id'          => (int) ($this->request->getPost('activity_id') ?? 0),
                 'operation'            => (string) ($this->request->getPost('operation') ?? ActivityScheduleService::OPERATION_CREATE),
                 'confirm_plan_id'      => (int) ($this->request->getPost('confirm_plan_id') ?? 0),
+                'confirm_plan_updated_at' => (string) ($this->request->getPost('confirm_plan_updated_at') ?? ''),
                 'recurrence_type'      => (string) ($this->request->getPost('recurrence_type') ?? 'DAILY'),
                 'recurrence_days'      => (array) ($this->request->getPost('recurrence_days') ?? []),
                 'recurrence_weekday'   => (int) ($this->request->getPost('recurrence_weekday') ?? 1),
@@ -75,11 +76,13 @@ class ActivityPlans extends BaseController
                     'code'                  => 'SCHEDULE_EXISTS',
                     'message'               => 'Aktivitas ini sudah memiliki jadwal. Apakah Anda ingin mengganti jadwal lama atau menambahkan sesi baru?',
                     'existing'              => $result['existing'] ?? [],
+                    'existing_plans'        => $result['existing_plans'] ?? [],
                     'proposed'              => $result['proposed'] ?? [],
                     'operations'            => [
                         'replace'     => in_array(ActivityScheduleService::OPERATION_REPLACE, $result['operations'] ?? [], true),
                         'add_session' => in_array(ActivityScheduleService::OPERATION_ADD_SESSION, $result['operations'] ?? [], true),
                     ],
+                    'add_session_disabled_reason' => $result['add_session_disabled_reason'] ?? 'Kebijakan aktivitas ini tidak mengizinkan jadwal tambahan.',
                 ]);
             }
 

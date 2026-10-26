@@ -372,8 +372,10 @@ class ActivityScheduleService extends BaseService
                     'conflicts'    => [],
                     'requires_confirmation' => true,
                     'existing'     => $this->describePlanChoice($target),
+                    'existing_plans' => array_map(fn (array $plan): array => $this->describePlanChoice($plan), $existingPlans),
                     'proposed'     => $this->describePlanChoice($candidate),
                     'operations'   => $this->availableOperations($activity, $existingPlans),
+                    'add_session_disabled_reason' => $this->additionalSessionDisabledReason($activity, $existingPlans),
                 ];
             }
 
@@ -381,6 +383,17 @@ class ActivityScheduleService extends BaseService
             // CASE E: confirmed replacement.
             // ---------------------------------------------------------------
             if ($operation === self::OPERATION_REPLACE) {
+                $target = $this->resolvePlanChoice($userId, $activityId, $input, $existingPlans);
+
+                $expectedUpdatedAt = trim((string) ($input['confirm_plan_updated_at'] ?? ''));
+                if ($expectedUpdatedAt === '' || (string) ($target['updated_at'] ?? '') !== $expectedUpdatedAt) {
+                    throw new ValidationException('Jadwal yang dipilih sudah berubah di tab lain. Muat ulang halaman dan pilih jadwal pengganti lagi.');
+                }
+
+                if ($this->planMatchesPayload($target, $payload)) {
+                    throw new ValidationException('Jadwal yang diajukan sama dengan jadwal yang dipilih dan tidak mengubah apa pun.');
+                }
+
                 // Ordering note: assertReplaceAllowed() is intentionally not
                 // called here. validateCandidate() above already compared the
                 // candidate against every other active plan while excluding
@@ -580,6 +593,42 @@ class ActivityScheduleService extends BaseService
     }
 
     /**
+     * Explain why the modal cannot add another schedule for this activity.
+     * This is presentation only; add attempts remain validated by the service.
+     *
+     * @param array<string, mixed>       $activity
+     * @param list<array<string, mixed>> $existingPlans
+     */
+    private function additionalSessionDisabledReason(array $activity, array $existingPlans): string
+    {
+        $repeatType = strtoupper((string) ($activity['repeat_type'] ?? ''));
+        $name = (string) ($activity['name'] ?? 'Aktivitas ini');
+
+        if ($repeatType === 'ONCE_DAILY'
+            || ($repeatType === 'REPEATABLE' && (int) ($activity['maximum_daily_completions'] ?? 1) <= 1)) {
+            return sprintf('Batas harian "%s" adalah satu kali, jadi jadwal tambahan tidak diizinkan.', $name);
+        }
+
+        if ($repeatType === 'WEEKLY') {
+            return 'Aktivitas dengan kebijakan WEEKLY tidak mendukung jadwal tambahan.';
+        }
+
+        if ($repeatType === 'FIXED_SESSIONS') {
+            return 'Sesi aktivitas ini ditentukan oleh sesi tetap; jadwal tambahan tidak tersedia.';
+        }
+
+        if ($repeatType === 'REPEATABLE') {
+            $maxDaily = max(1, (int) ($activity['maximum_daily_completions'] ?? 1));
+
+            if (count($existingPlans) >= $maxDaily) {
+                return sprintf('Batas harian "%s" sudah mencapai %d jadwal.', $name, $maxDaily);
+            }
+        }
+
+        return 'Kebijakan aktivitas ini tidak mengizinkan jadwal tambahan.';
+    }
+
+    /**
      * @param array<string, mixed>       $activity
      * @param list<array<string, mixed>> $existingPlans
      * @param array<string, mixed>       $candidate
@@ -745,6 +794,7 @@ class ActivityScheduleService extends BaseService
             'preferred_start_time' => ScheduleRules::normalizeTime($plan['preferred_start_time'] ?? null),
             'preferred_end_time'   => ScheduleRules::normalizeTime($plan['preferred_end_time'] ?? null),
             'is_enabled'           => (int) ($plan['is_enabled'] ?? 0),
+            'updated_at'           => (string) ($plan['updated_at'] ?? ''),
         ];
     }
 
