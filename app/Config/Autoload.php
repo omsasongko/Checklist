@@ -92,5 +92,6 @@ class Autoload extends AutoloadConfig
         'settings',
         'form',
         'auth',
+        'lifequest',
     ];
 }

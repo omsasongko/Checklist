@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title><?= esc($title ?? 'LifeQuest') ?></title>
 
     <!-- Bootstrap 5.3.8 CSS -->
@@ -102,6 +103,10 @@
             box-shadow: 0 0 0 0.2rem rgba(0, 212, 255, 0.25);
         }
 
+        .form-control::placeholder {
+            color: #718096;
+        }
+
         .text-muted {
             color: var(--text-muted) !important;
         }
@@ -136,29 +141,36 @@
             transition: width 0.5s ease;
         }
     </style>
+
+    <link href="/assets/css/lifequest.css" rel="stylesheet">
 </head>
 <body class="bg-navy min-vh-100 d-flex flex-column">
 
     <?= $this->include('layout/header') ?>
 
     <main class="flex-fill container py-4">
+        <?= $this->include('layout/flash') ?>
         <?= $this->renderSection('content') ?>
     </main>
 
     <?= $this->include('layout/footer') ?>
 
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="lq-toast-container" aria-live="polite" aria-atomic="true"></div>
+
     <!-- Bootstrap 5.3.8 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
 
-    <!-- Custom JS -->
+    <script src="/assets/js/lifequest.js"></script>
+
+    <?php // Activity plan replacement / additional-session confirmation. ?>
+    <script src="/assets/js/plan-confirm.js"></script>
+
+    <!-- Toast auto-dismiss -->
     <script>
-        // Toast auto-dismiss
-        document.addEventListener('DOMContentLoaded', function() {
-            var toastElList = document.querySelectorAll('.toast');
-            var toastList = [...toastElList].map(function(toastEl) {
-                return new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.toast').forEach(function (toastEl) {
+                new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 }).show();
             });
-            toastList.forEach(function(toast) { toast.show(); });
         });
     </script>
 </body>

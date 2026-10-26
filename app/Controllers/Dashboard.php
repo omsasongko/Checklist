@@ -2,21 +2,35 @@
 
 namespace App\Controllers;
 
-use CodeIgniter\Controller;
+use App\Libraries\ScheduleRules;
+use App\Services\ChecklistService;
+use Throwable;
 
-class Dashboard extends Controller
+class Dashboard extends BaseController
 {
     public function index()
     {
-        $auth = service('auth');
+        $user      = $this->currentUser();
+        $today     = ScheduleRules::todayInTimezone(ScheduleRules::DEFAULT_TIMEZONE);
+        $checklist = [
+            'date'     => $today,
+            'timezone' => ScheduleRules::DEFAULT_TIMEZONE,
+            'items'    => [],
+            'groups'   => [],
+            'progress' => ['completed' => 0, 'total' => 0, 'percent' => 0],
+        ];
 
-        if (! $auth->loggedIn()) {
-            return redirect()->to('/masuk')->with('error', 'Silakan masuk terlebih dahulu.');
+        try {
+            $checklist = (new ChecklistService())->getChecklist((int) $user->id, $today);
+        } catch (Throwable $exception) {
+            log_message('error', 'Dashboard checklist load failed: {message}', ['message' => $exception->getMessage()]);
         }
 
         return view('dashboard/index', [
-            'title' => 'Beranda - LifeQuest',
-            'user'  => $auth->user(),
+            'title'     => 'Beranda - LifeQuest',
+            'user'      => $user,
+            'today'     => $today,
+            'checklist' => $checklist,
         ]);
     }
 }

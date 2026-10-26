@@ -1,14 +1,14 @@
 # LifeQuest — Database Design
 **Product:** LifeQuest — Daily Life RPG  
 **Document Version:** 2.1.0 (aligned with PRD V2.1.0, Section 19)  
-**Status:** For Review — Planning Only (post Design Review corrections)  
+**Status:** Phase 1 and Phase 2 implemented; Phase 3+ schema remains planned  
 **Primary Documentation Language:** English  
 **Target Database:** `lifequest_db`  
 **Database Engine:** MySQL 9.7 LTS  
 **Storage Engine:** InnoDB  
 **Character Set:** utf8mb4  
 **Collation:** utf8mb4_unicode_ci  
-**Rule:** No migrations, no table creation, no database changes until approved.
+**Rule:** Phase 2 migrations are applied. Any Phase 3+ table, column, or constraint change requires approval before execution.
 
 ---
 
@@ -104,6 +104,10 @@ Custom Shield groups to be seeded:
 
 ## 5. Activities Domain
 
+> **Phase 2 implementation note (2026-10-23):** The activity catalog, planning, and daily-instance tables below are implemented through two additive migrations. Only these Phase 2 tables and a minimal forward-compatible `seasons` FK target exist; reward, verification, achievement, leaderboard, and season-result tables remain planned for later phases. Shield tables and existing users were not modified.
+
+**Implemented Phase 2 tables:** `activity_categories`, `reward_groups`, `verification_policies`, `activities`, `activity_sessions`, `user_activity_plans`, `daily_activity_instances`, `activity_configuration_versions`, `seasons` (minimal).
+
 ### activity_categories
 
 | Column | Type | Null | Key | Default | Description |
@@ -125,6 +129,7 @@ Custom Shield groups to be seeded:
 | group_code | VARCHAR(50) | NO | UNIQUE | | Code like `MORNING`, `FITNESS` |
 | name | VARCHAR(100) | NO | | | Reward group name (Indonesian) |
 | description | TEXT | YES | | | Group description |
+| default_daily_rp_budget | INT UNSIGNED | NO | | 0 | Default daily RP budget used for Phase 3 reward planning |
 | is_active | TINYINT(1) | NO | | 1 | Whether group is active |
 
 ---
@@ -148,15 +153,18 @@ Custom Shield groups to be seeded:
 | cooldown_seconds | INT UNSIGNED | YES | | | Cooldown between completions |
 | maximum_daily_completions | INT UNSIGNED | NO | | 1 | Max completions per day |
 | maximum_weekly_completions | INT UNSIGNED | NO | | 7 | Max completions per week |
+| created_by_user_id | INT UNSIGNED | YES | FK → users.id | NULL | Owner for `CUSTOM` activities; NULL for standard activities |
 | is_active | TINYINT(1) | NO | | 1 | Whether activity is active |
 | created_at | DATETIME | YES | | | Record creation |
 | updated_at | DATETIME | YES | | | Record last update |
 
 **Constraints:**
-- UK `uk_activities_activity_code` on `activity_code`
-- FK → `activity_categories(id)` ON DELETE SET NULL
-- FK → `reward_groups(id)` ON DELETE SET NULL
-- FK → `verification_policies(id)` ON DELETE SET NULL
+- UK `uk_activities_code` on `activity_code`
+- FK `fk_activities_category` → `activity_categories(id)` ON DELETE SET NULL
+- FK `fk_activities_reward_group` → `reward_groups(id)` ON DELETE SET NULL
+- FK `fk_activities_policy` → `verification_policies(id)` ON DELETE SET NULL
+- FK `fk_activities_owner` → `users(id)` ON DELETE RESTRICT (NO ACTION)
+- IDX `idx_activities_category`, `idx_activities_reward_group`, `idx_activities_policy`, `idx_activities_owner`, `idx_activities_type`, `idx_activities_repeat`, `idx_activities_active`
 
 ---
 
@@ -176,7 +184,10 @@ Custom Shield groups to be seeded:
 | is_active | TINYINT(1) | NO | | 1 | Whether session is active |
 
 **Constraints:**
-- FK → `activities(id)` ON DELETE CASCADE
+- FK `fk_activity_sessions_activity` → `activities(id)` ON DELETE CASCADE
+- UK `uk_activity_sessions_activity_code` on `(activity_id, session_code)`
+- IDX `idx_activity_sessions_activity` on `(activity_id)`
+- IDX `idx_activity_sessions_active` on `(is_active)`
 
 ---
 
@@ -187,15 +198,19 @@ Custom Shield groups to be seeded:
 | id | BIGINT UNSIGNED | NO | PK | AI | Primary key |
 | user_id | INT UNSIGNED | NO | FK → users.id | | User who owns the plan |
 | activity_id | BIGINT UNSIGNED | NO | FK → activities.id | | Activity in the plan |
-| recurrence_rule | VARCHAR(255) | YES | | | Recurrence rule (e.g., daily, weekly) |
+| recurrence_rule | VARCHAR(500) | YES | | | JSON recurrence rule (`DAILY`, `WEEKDAYS`, `WEEKLY`, `CUSTOM_DAYS`) |
 | timezone | VARCHAR(64) | NO | | 'Asia/Jakarta' | User's timezone for this plan |
+| preferred_start_time | TIME | YES | | | Optional preferred start time |
+| preferred_end_time | TIME | YES | | | Optional preferred end time |
 | is_enabled | TINYINT(1) | NO | | 1 | Whether plan is enabled |
 | created_at | DATETIME | YES | | | Record creation |
 | updated_at | DATETIME | YES | | | Record last update |
 
 **Constraints:**
-- FK → `users(id)` ON DELETE NO ACTION
-- FK → `activities(id)` ON DELETE CASCADE
+- FK `fk_uap_user` → `users(id)` ON DELETE RESTRICT (NO ACTION)
+- FK `fk_uap_activity` → `activities(id)` ON DELETE CASCADE
+- UK `uk_uap_user_activity` on `(user_id, activity_id)` (one plan per user/activity)
+- IDX `idx_uap_user`, `idx_uap_activity`, `idx_uap_user_enabled`
 
 ---
 
@@ -216,27 +231,33 @@ Custom Shield groups to be seeded:
 | completion_status | VARCHAR(20) | NO | | 'PENDING' | `PENDING`, `COMPLETED`, `SKIPPED` |
 | verification_status | VARCHAR(20) | NO | | 'NOT_REQUIRED' | Verification state |
 | reward_status | VARCHAR(20) | NO | | 'NOT_ELIGIBLE' | `NOT_ELIGIBLE`, `PENDING`, `CONFIRMED`, `REJECTED`, `REVERSED` |
-| scheduled_at | DATETIME | YES | | | Scheduled time |
+| scheduled_at | DATETIME | YES | | | Scheduled start time (UTC) |
+| scheduled_end_at | DATETIME | YES | | | Scheduled end time (UTC) |
 | completed_at | DATETIME | YES | | | Completion time |
 | created_at | DATETIME | YES | | | Record creation |
 | updated_at | DATETIME | YES | | | Record last update |
 
 **Constraints:**
-- FK → `users(id)` ON DELETE NO ACTION
-- FK → `activities(id)` ON DELETE NO ACTION
-- FK → `activity_sessions(id)` ON DELETE SET NULL
-- FK → `seasons(id)` ON DELETE NO ACTION
-- FK → `activity_configuration_versions(id)` ON DELETE NO ACTION
-- **UK `uk_daily_activity_instances_occurrence_identity` on `occurrence_identity` (NON-NULL)**
-- IDX `idx_daily_activity_instances_user_date` on `(user_id, activity_date)`
-- IDX `idx_daily_activity_instances_competition_date` on `(competition_date)`
-- IDX `idx_daily_activity_instances_verification` on `(verification_status)`
-- IDX `idx_daily_activity_instances_reward` on `(reward_status)`
-- IDX `idx_daily_activity_instances_season` on `(season_id)`
+- FK `fk_dai_user` → `users(id)` ON DELETE RESTRICT (NO ACTION)
+- FK `fk_dai_activity` → `activities(id)` ON DELETE RESTRICT (NO ACTION)
+- FK `fk_dai_session` → `activity_sessions(id)` ON DELETE SET NULL
+- FK `fk_dai_season` → `seasons(id)` ON DELETE RESTRICT (NO ACTION)
+- FK `fk_dai_config` → `activity_configuration_versions(id)` ON DELETE RESTRICT (NO ACTION)
+- **UK `uk_dai_occurrence` on `occurrence_identity` (NON-NULL)**
+- IDX `idx_dai_user_date` on `(user_id, activity_date)`
+- IDX `idx_dai_user_activity_date` on `(user_id, activity_id, activity_date)`
+- IDX `idx_dai_competition` on `(competition_date)`
+- IDX `idx_dai_verification` on `(verification_status)`
+- IDX `idx_dai_reward` on `(reward_status)`
+- IDX `idx_dai_season` on `(season_id)`
+- IDX `idx_dai_status_date` on `(activity_date, completion_status)`
+- IDX `idx_dai_scheduled` on `(scheduled_at)`
 
-> `occurrence_identity` is generated server-side (never from client input) in format: `user:{user_id}:activity:{activity_id}:date:{activity_date}:{repeat_type}:{session_code_or_occurrence}`. Being NOT NULL, MySQL uniqueness behaves correctly (no NULL ambiguity).
+> Phase 2 writes store `season_id = NULL` and `reward_status = 'NOT_ELIGIBLE'`. `verification_status` is `AUTO_VALIDATED` for `SELF_CHECK` and `PENDING` for `TIMER`; all Phase 2 completions award zero XP/RP.
 
-> **WEEKLY repeat type:** The `occurrence_identity` includes the ISO week number (e.g., `WEEKLY:ISO-week-42`). ISO week boundaries follow Monday-start weeks per ISO-8601. The application must compute the ISO week from `activity_date` in the user's configured timezone to ensure consistent occurrence identity across timezone boundaries.
+> `occurrence_identity` is generated server-side (never from client input) in the implemented format `user:{user_id}:activity:{activity_id}:date:{activity_date}:{repeat_type}:{suffix}`, where suffix is `ONCE`, `SESSION_{session_code}`, `OCCURRENCE_{n}`, or `WEEK_{ISO-week}`. Being NOT NULL, MySQL uniqueness behaves correctly (no NULL ambiguity).
+
+> **WEEKLY repeat type:** The implemented `WEEKLY` suffix uses the ISO week key from `activity_date` (for example, `WEEK_2026-W43`) per ISO-8601. `ScheduleRules::isoWeekKey()` is the single source of truth.
 
 ---
 
@@ -382,14 +403,17 @@ Custom Shield groups to be seeded:
 | version_number | INT UNSIGNED | NO | | 1 | Configuration version |
 | configuration_snapshot | JSON | NO | | | Full configuration snapshot |
 | effective_season_id | BIGINT UNSIGNED | YES | FK → seasons.id | | Effective season |
-| created_by | INT UNSIGNED | NO | FK → users.id | | Administrator who created |
+| created_by | INT UNSIGNED | YES | FK → users.id | NULL | Administrator or system actor; NULL for seeded standard activities |
 | created_at | DATETIME | NO | | | Creation timestamp |
 
 **Constraints:**
-- FK → `activities(id)` ON DELETE CASCADE
-- FK → `seasons(id)` ON DELETE NO ACTION
-- FK → `users(id)` ON DELETE NO ACTION
-- UK `uk_activity_configuration_versions_activity_version` on `(activity_id, version_number)`
+- FK `fk_acv_activity` → `activities(id)` ON DELETE CASCADE
+- FK `fk_acv_season` → `seasons(id)` ON DELETE RESTRICT (NO ACTION)
+- FK `fk_acv_creator` → `users(id)` ON DELETE RESTRICT (NO ACTION)
+- UK `uk_acv_activity_version` on `(activity_id, version_number)`
+- IDX `idx_acv_activity`, `idx_acv_season`, `fk_acv_creator`
+
+> Phase 2 uses this table to snapshot the reference XP/RP and verification configuration at instance generation time. Reward processing does not consume these snapshots until Phase 3.
 
 ---
 
@@ -553,9 +577,11 @@ Custom Shield groups to be seeded:
 | finalized_at | DATETIME | YES | | | When season was finalized |
 
 **Constraints:**
-- UK `uk_seasons_season_number` on `season_number`
+- UK `uk_seasons_number` on `season_number`
 - IDX `idx_seasons_status` on `(status)`
 - IDX `idx_seasons_dates` on `(starts_at, ends_at)`
+
+> **Phase 2 implementation note:** `seasons` is created only as a minimal FK target for `daily_activity_instances` and `activity_configuration_versions`. It contains no Phase 2 rows, lifecycle behavior, budget configuration, or results. Season lifecycle and finalization remain Phase 6 work.
 
 ---
 
@@ -838,23 +864,30 @@ Use `INSERT ... ON DUPLICATE KEY UPDATE` for `daily_reward_budgets`, `daily_xp_t
 - Custom migrations reference Shield tables via FK with ON DELETE NO ACTION only
 - **Shield user table is `users`** — all custom FKs reference `users(id)`
 
+### Applied Phase 2 Migrations (2026-10-23)
+
+| Migration | Scope | Status |
+|-----------|-------|--------|
+| `2026-10-23-100000_CreateActivityCatalogTables` | `activity_categories`, `reward_groups`, `verification_policies`, `activities`, `activity_sessions` | Applied |
+| `2026-10-23-100100_CreateActivityPlanningTables` | Minimal `seasons`, `activity_configuration_versions`, `user_activity_plans`, `daily_activity_instances` | Applied |
+
+Both migrations are additive, were inspected before execution, and did not alter Shield tables or users 1-9. The `down()` methods are present for reversibility but were not executed.
+
 ---
 
 ## 15. Unresolved Database Decisions
 
 | # | Decision | Options | Impact |
 |---|----------|---------|--------|
-| DB1 | PHP 8.5.12 / MySQL 9.7 availability | Confirm vs fallback versions | Affects provisioning |
-| DB2 | Shield `users.id` type | INT UNSIGNED vs BIGINT UNSIGNED | Affects custom table `user_id` column types — must verify before migration |
+| DB1 | PHP 8.5.12 / MySQL 9.7 availability | **Resolved:** PHP 8.5.12 NTS and MySQL 9.7.4 verified | No blocker |
+| DB2 | Shield `users.id` type | **Resolved:** `INT UNSIGNED` verified; Phase 2 user FKs use `INT UNSIGNED` | No blocker |
 | DB3 | Timer session storage | MySQL table vs Redis | Affects `timer_sessions` table usage |
 | DB4 | Evidence storage backend | Local filesystem vs object storage | Affects `private_storage_key` semantics |
 | DB5 | Caching layer | File cache vs Redis vs none | Affects leaderboard performance |
 | DB6 | Partitioning | None vs date-based partitioning on large tables | Affects long-term scalability |
 
-**Blocking item:** DB2 must be resolved before any custom migration references `users`.
-
 ---
 
 ## 16. Next Step
 
-Wait for implementation approval. No migrations or database changes may begin until DATABASE.md, ARCHITECTURE.md, DEVELOPMENT_PLAN.md, TASKS.md, TESTING.md, AGENTS.md, DESIGN_REVIEW.md, and FINAL_DESIGN_VALIDATION.md are reviewed and approved.
+Phase 2 schema is implemented and verified. Await approval before Phase 3 schema work. Phase 3+ tables (`point_transactions`, `daily_xp_totals`, `daily_rp_totals`, `daily_reward_budgets`, `user_lifetime_stats`, `user_season_stats`, and later domain tables) must not be created until the Phase 2 acceptance report is approved.

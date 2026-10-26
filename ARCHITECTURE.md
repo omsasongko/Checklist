@@ -1,10 +1,10 @@
 # LifeQuest — Application Architecture
 **Product:** LifeQuest — Daily Life RPG  
 **Document Version:** 2.1.0 (aligned with PRD V2.1.0, Sections 20-21)  
-**Status:** For Review — Planning Only (post Design Review corrections)  
+**Status:** Phase 1 and Phase 2 implemented; Phase 3+ remains planned  
 **Primary Documentation Language:** English  
 **Application Interface Language:** Indonesian (Bahasa Indonesia)  
-**Rule:** No source code, no migrations, no dependency installation until approved.
+**Rule:** Phase 2 is implemented and verified. Phase 3+ code changes require approval of the Phase 2 acceptance report.
 
 ---
 
@@ -133,6 +133,18 @@ Controllers are thin and handle:
 
 Controllers must not contain business logic. All calculations, validations, and state changes are delegated to services.
 
+### Phase 2 Controllers Implemented
+
+| Controller | Responsibility |
+|------------|----------------|
+| `Dashboard` | Authenticated dashboard, today's progress, zero-XP/RP Phase 2 notice |
+| `Activities` | Catalog, search/category filter, standard/custom detail, custom create/edit/deactivate |
+| `ActivityPlans` | Personal plan list, create/update recurrence and timezone, enable/disable |
+| `Checklist` | Daily checklist, date navigation, server-validated completion, history |
+| `Api\Activities` | JSON catalog, today checklist, history, and completion; accepts JSON or form payloads |
+
+All Phase 2 controllers extend `BaseController` and rely on the global `session` filter plus ownership checks in services. The HTML completion endpoint and JSON completion endpoint share `ChecklistService::completeInstance()`.
+
 ---
 
 ## 5. Service Layer
@@ -169,6 +181,28 @@ The following 19 services are required by PRD Section 20.4. Each service owns a 
 - Services use row-level locking for concurrent budget updates
 - **Services follow consistent lock ordering to prevent deadlocks** (see Section 10)
 - **Services implement deadlock retry logic** (up to 3 retries with exponential backoff)
+
+### Phase 2 Services Implemented
+
+| Service | Phase 2 implementation |
+|---------|------------------------|
+| `ActivityService` | Catalog visibility (standard + own custom), custom activity validation, reference XP/RP set to zero for custom skills, configuration version snapshots |
+| `ActivityScheduleService` | Plan create/update, recurrence JSON, timezone, preferred times, enable/disable, one plan per user/activity |
+| `ChecklistService` | Idempotent instance generation, fixed sessions, repeatable occurrences, ISO-week weekly identity, cooldown/daily/weekly limits, server-side completion, timezone date handling, history |
+| `BaseService` | Shared transaction, query, and error conventions |
+| `ScheduleRules` (library) | Repeat/recurrence validation, occurrence identity, ISO week, timezone/date conversion, cooldown calculation |
+
+Phase 2 intentionally does **not** implement `PointsService`, `RewardBudgetService`, `TimerService`, `EvidenceService`, `VerificationService`, `RankingService`, `LeaderboardService`, or `SeasonService`. Completions store `reward_status = 'NOT_ELIGIBLE'` and zero XP/RP. `TIMER` completions are marked `PENDING`, but timer capture and verification routing are deferred to Phase 3/4.
+
+### Phase 2 Activity and Checklist Flow
+
+1. A user browses the catalog (`ActivityService::activitiesForUser()`), sees standard activities plus only their own custom activities.
+2. The user creates a custom activity (limited to `ONCE_DAILY`, `REPEATABLE`, `WEEKLY`) and optionally a plan (`ActivityScheduleService`).
+3. Opening the dashboard, checklist, or API calls `ChecklistService::ensureInstancesForDate()`.
+4. Enabled plans matching the requested date generate instances using `ScheduleRules::occurrenceIdentity()`; the unique key prevents duplicate generation under concurrency.
+5. `ChecklistService::getChecklist()` computes completion eligibility from current timezone date, plan state, cooldown, daily limit, and weekly limit.
+6. Completion runs server-side through `ChecklistService::completeInstance()` with an ownership check, date check, duplicate/idempotency check, limit/cooldown checks, and a conditional update.
+7. The completion response always reports `reward_status = 'NOT_ELIGIBLE'`, `xp_awarded = 0`, and `rp_awarded = 0`. No point ledger, aggregate, rank, or season row is touched in Phase 2.
 
 ---
 
@@ -473,13 +507,40 @@ All reward transactions acquire locks in this exact order:
 
 All non-public endpoints require authentication and appropriate authorization.
 
+### Phase 2 Implemented Routes (2026-10-23)
+
+| Method | Endpoint | Controller | Auth |
+|--------|----------|------------|------|
+| GET | `/beranda` | `Dashboard::index` | session |
+| GET | `/aktivitas` | `Activities::index` | session |
+| GET | `/aktivitas/baru` | `Activities::create` | session |
+| POST | `/aktivitas` | `Activities::store` | session + CSRF |
+| GET | `/aktivitas/{id}` | `Activities::show` | session + ownership |
+| GET | `/aktivitas/{id}/ubah` | `Activities::edit` | session + ownership |
+| POST | `/aktivitas/{id}/ubah` | `Activities::update` | session + CSRF + ownership |
+| POST | `/aktivitas/{id}/nonaktifkan` | `Activities::deactivate` | session + CSRF + ownership |
+| GET | `/jadwal` | `ActivityPlans::index` | session |
+| POST | `/jadwal` | `ActivityPlans::save` | session + CSRF |
+| POST | `/jadwal/{id}/status` | `ActivityPlans::toggle` | session + CSRF + ownership |
+| GET | `/checklist` | `Checklist::index` | session |
+| POST | `/checklist/{id}/selesai` | `Checklist::complete` | session + CSRF + ownership |
+| GET | `/riwayat` | `Checklist::history` | session |
+| GET | `/api/activities` | `Api\Activities::index` | session |
+| GET | `/api/activities/today` | `Api\Activities::today` | session |
+| GET | `/api/activities/history` | `Api\Activities::history` | session |
+| POST | `/api/activities/{id}/complete` | `Api\Activities::complete` | session + CSRF + ownership |
+
+### Planned Routes for Later Phases
+
+The tables below remain planned and are not implemented in Phase 2.
+
 ### Authentication
 - Uses supported CodeIgniter Shield authentication routes
 
 ### Dashboard
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/dashboard` | Dashboard page |
+| GET | `/beranda` | Dashboard page |
 | GET | `/api/me/summary` | User summary |
 | GET | `/api/me/statistics` | User statistics |
 
@@ -741,6 +802,8 @@ lifequest/
 
 > **`writable/storage/evidence/`** is outside the public web root. All evidence retrieval goes through `EvidenceController::download()` with authorization check.
 
+> **Phase 2 actual implementation:** Controllers `Activities`, `ActivityPlans`, `Checklist`, `Dashboard`, and `Api\Activities`; services `ActivityService`, `ActivityScheduleService`, `ChecklistService`, `BaseService`; library `ScheduleRules`; models `ActivityCategoryModel`, `ActivityModel`, `ActivitySessionModel`, `RewardGroupModel`, `VerificationPolicyModel`, `UserActivityPlanModel`, `DailyActivityInstanceModel`, `ActivityConfigurationVersionModel`, `SeasonModel`; views `activities/`, `plans/`, `checklist/`, `dashboard/`; assets `public/assets/css/lifequest.css` and `public/assets/js/lifequest.js`.
+
 ---
 
 ## 18. Language Strategy
@@ -761,17 +824,15 @@ Future localization mechanism must be supported but is not required for MVP.
 
 | # | Decision | Options | Impact |
 |---|----------|---------|--------|
-| A1 | Shield `users.id` type | INT UNSIGNED vs BIGINT UNSIGNED | Must verify before creating custom FKs |
+| A1 | Shield `users.id` type | **Resolved:** `INT UNSIGNED` verified; Phase 2 FKs use the same type | No blocker |
 | A2 | Timer session storage | Database vs in-memory (Redis) | Affects TimerService complexity and performance |
 | A3 | Evidence storage backend | Local filesystem vs cloud storage | Affects EvidenceService and deployment |
 | A4 | Scheduled job runner | CI4 scheduler vs external cron | Affects season transitions and streak reconciliation |
 | A5 | Caching layer | File cache vs Redis vs none | Affects leaderboard performance |
-| A6 | PHP 8.5.12 / MySQL 9.7 availability | Confirm vs fallback versions | Affects environment setup |
-
-**Blocking item:** A1 must be resolved during Phase 0 verification before custom migrations are written.
+| A6 | PHP 8.5.12 / MySQL 9.7 availability | **Resolved:** PHP 8.5.12 NTS and MySQL 9.7.4 verified | No blocker |
 
 ---
 
 ## 20. Next Step
 
-Wait for implementation approval. No source code, migrations, or dependency installation may begin until ARCHITECTURE.md, DATABASE.md, DEVELOPMENT_PLAN.md, TASKS.md, TESTING.md, AGENTS.md, and DESIGN_REVIEW.md are reviewed and approved.
+Phase 2 architecture is implemented and verified. Await approval before Phase 3 (Reward Engine). Do not add XP/RP calculations, point ledger tables, reward budgets, ranking, leaderboard, or season lifecycle behavior until the Phase 2 acceptance report is approved.

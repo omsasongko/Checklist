@@ -10,26 +10,6 @@
             <p class="text-muted">Mulai petualangan LifeQuest Anda</p>
         </div>
 
-        <?php if (session()->getFlashdata('error')): ?>
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i><?= esc(session()->getFlashdata('error')) ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
-        <?php if (session()->getFlashdata('errors')): ?>
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                <ul class="mb-0 mt-2">
-                    <?php $fieldLabels = ['username' => 'Username', 'email' => 'Email', 'password' => 'Kata Sandi', 'password_confirm' => 'Konfirmasi Kata Sandi']; ?>
-                    <?php foreach (session()->getFlashdata('errors') as $field => $error): ?>
-                        <li><?= esc($fieldLabels[$field] ?? ucfirst((string) $field)) ?>: <?= esc(is_array($error) ? $error[0] : $error) ?></li>
-                    <?php endforeach; ?>
-                </ul>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
         <form action="/daftar" method="post">
             <?= csrf_field() ?>
 

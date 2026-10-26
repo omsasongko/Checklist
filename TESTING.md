@@ -1,9 +1,9 @@
 # LifeQuest — Testing Plan
 **Product:** LifeQuest — Daily Life RPG  
 **Document Version:** 2.1.0 (aligned with PRD V2.1.0, Section 28, post Design Review corrections)  
-**Status:** For Review — Planning Only  
+**Status:** Phase 1 and Phase 2 test execution complete (including Phase 2 schedule conflict validation and the duplicate/silent-replacement fix); Phase 3+ tests remain planned  
 **Primary Documentation Language:** English  
-**Rule:** No test code may be written until this plan and all documentation are approved.
+**Rule:** Phase 3+ test implementation requires approval of the Phase 2 acceptance report, which is still pending a user re-run of the manual acceptance test.
 
 ---
 
@@ -15,6 +15,136 @@ Testing follows the pyramid model: unit tests (foundation), integration tests (m
 **Test environments:** Local Windows development machine, staging (production-like)  
 **Test data:** Seed data from database seeders; isolated test database  
 **Shield schema:** Test database must use Shield's actual `users` schema (verified during Phase 0)
+
+---
+
+## 1.1 Phase 2 Executed Verification (2026-10-23)
+
+Phase 2 verification was executed against the running application at `http://127.0.0.1:8080/` using the real `lifequest_db` with Shield users 1-9 preserved. Test accounts created for the runs are outside the preserved range. The temporary harnesses are intentionally outside the repository.
+
+| Suite | Checks | Result | Scope |
+|-------|--------|--------|-------|
+| Phase 2 integration | 170 | 170 / 170 passed (8 consecutive runs) | Seed idempotency, schema guards, catalog/search/category, custom activity CRUD, plans, instance generation, once-daily, TIMER policy state, fixed sessions, repeatable cooldown/daily/weekly limits, weekly recurrence, toggles, future-date protection, duplicates, history, APIs, timezone dates, ownership/IDOR, auth regression, zero XP/RP |
+| Phase 2 duplicate schedule acceptance | 86 | 86 / 86 passed | `DS-001`–`DS-015`: duplicate detection, confirmation dialog, cancel preservation, confirmed replacement, hard-conflict rejection, ONCE_DAILY session rejection, repeatable sessions, duplicate submissions, unauthorized replacement, concurrent replacements, completion-history preservation, CSRF regeneration, conflict regression, XP/RP unchanged |
+| Phase 2 schedule conflict unit | 25 | 25 / 25 passed | Resolver classification, half-open intervals, window bases, policy resolution, parallel restrictions, Indonesian messages |
+| Phase 2 schedule conflict integration | 65 | 65 / 65 passed | HTTP acceptance scenarios for overlap rejection/acceptance, recurrence awareness, per-user isolation, edit and re-enable validation, existing-overlap reporting, and 2-way/4-way concurrent submissions |
+| Phase 2 desktop/mobile browser | 42 | 42 / 42 passed | Dashboard, catalog, detail, custom form, plan form, checklist, AJAX completion + toast, history, mobile navigation, 14 screenshots, zero uncaught JS errors, no horizontal overflow at 1440px or 390px |
+| Phase 2 JSON API | 7 | 7 / 7 passed | JSON-body completion, duplicate idempotency, zero XP/RP, malformed JSON 400 with Indonesian message |
+| Phase 2 schema verification | Passed | Passed | `activities.schedule_policy` type/default/index, policy distribution, plan and instance counts, users 1-9 intact |
+| Phase 1 authentication hardening | 37 | 37 / 37 passed | Registration, login, POST logout, CSRF rejection, rate limiting, session survival, dashboard regression |
+| Phase 1 rate limit | 13 | 13 / 13 passed | 10 allowed attempts followed by 429 with Indonesian message and Retry-After |
+| Phase 1 responsive | 18 | 18 / 18 passed | Desktop/mobile landing, login, dashboard, navigation, logout, no horizontal overflow |
+
+**Phase 2 database assertions:**
+
+- `users.id` and all Phase 2 user FKs are `INT UNSIGNED`.
+- `daily_activity_instances.occurrence_identity` is `NOT NULL` and has a unique index.
+- `activities.schedule_policy` is `VARCHAR(20) NOT NULL DEFAULT 'EXCLUSIVE'` with index `idx_activities_schedule_policy`.
+- `user_activity_plans.session_ordinal` is `TINYINT UNSIGNED NOT NULL DEFAULT 0`, and the unique key is `uk_uap_user_activity_session (user_id, activity_id, session_ordinal)`. Existing rows all carry ordinal `0`, so no schedule changed.
+- The `AddPlanSessionOrdinal` rollback guard was verified: while any activity holds more than one session, `down()` throws an Indonesian error and refuses to run rather than deleting schedules.
+- Seeded counts: 10 categories, 11 reward groups, 4 verification policies, 10 standard activities, 2 fixed sessions, and baseline configuration versions.
+- Reward group budget total is 140 RP including the `STREAK` group.
+- Phase 2 has no reward-engine tables: `point_transactions`, `daily_xp_totals`, `daily_rp_totals`, `daily_reward_budgets`, `user_lifetime_stats`, or `user_season_stats`.
+- Existing users 1-9 and all Shield authentication tables remain intact.
+
+**Screenshots:** Phase 2 desktop and mobile screenshots are stored in the local test artifact directory `C:\Users\pujiste001\AppData\Local\Temp\opencode\lifequest_phase2_screens`. They are not committed to the repository.
+
+### Phase 2 Test Boundaries
+
+The following are intentionally deferred and were not treated as Phase 2 failures:
+
+- XP/RP calculation, point ledger, daily caps, reward budgets, partial rewards, and deadlock/lock-order tests (Phase 3).
+- Timer start/finish, evidence upload, risk scoring, review queue, and appeals (Phase 4).
+- Rank, leaderboard, achievements, streaks, and season lifecycle (Phase 5/6).
+- True simultaneous multi-process completion tests; Phase 2 verifies duplicate-click idempotency and unique occurrence constraints in integration tests.
+- Reward-engine concurrency (lock ordering, deadlock retry, budget serialization) remains Phase 3. The concurrency checks below cover the schedule-write lock only.
+
+### Phase 2 Schedule Conflict Validation Tests (P2-09)
+
+Added after the schedule-overlap defect reported during Phase 2 manual acceptance. Full detail, including the defect analysis and manual retest steps, is in `PHASE2_SCHEDULE_CONFLICT_REPORT.md`.
+
+**Resolver unit tests — `phase2_conflict_unit_test.php` (25 checks):**
+
+| # | Case | Expected |
+|---|------|----------|
+| U-01 | Identical exclusive windows | `HARD_CONFLICT` / `EXCLUSIVE_OVERLAP` |
+| U-02 | Partial overlap exclusive | `HARD_CONFLICT` |
+| U-03 | One window contained in the other | `HARD_CONFLICT` |
+| U-04 | Adjacent windows (05:30-06:00, 06:00-06:30) | `NO_CONFLICT` (half-open interval) |
+| U-05 | Disjoint windows | `NO_CONFLICT` |
+| U-06 | Overlap on non-shared recurrence dates | `NO_CONFLICT` |
+| U-07 | Different users, identical windows | Not evaluated against each other |
+| U-08 | Both `PARALLEL_ALLOWED`, restrictions satisfied | `NO_CONFLICT` |
+| U-09 | Either side `EXCLUSIVE` | `HARD_CONFLICT` (exclusive wins) |
+| U-10 | Parallel pair, same category | `SOFT_CONFLICT` |
+| U-11 | Parallel pair, different verification family | `SOFT_CONFLICT` |
+| U-12 | Parallel pair, both require evidence | `SOFT_CONFLICT` |
+| U-13 | Session-defined window derived from sessions | `SESSION_DEFINED` bounds |
+| U-14 | No times and no sessions | `UNBOUNDED` 00:00-24:00 |
+| U-15 | Partial endpoint fallbacks | Start 00:00 / end 24:00 |
+| U-16 | Missing policy treated as `EXCLUSIVE` | `HARD_CONFLICT` |
+| U-17 | Invalid policy value rejected | Validation error |
+| U-18 | Indonesian messages name both activities and times | Message assertions |
+
+**HTTP/MySQL integration tests — `phase2_conflict_integration_test.php` (65 checks):**
+
+| # | Case | Expected |
+|---|------|----------|
+| I-01 | Original manual scenario: first 05:30-06:00 exclusive plan | Saved |
+| I-02 | Identical second exclusive plan | Rejected, first plan unchanged, Indonesian message names both activities |
+| I-03 | Partial overlap (05:45-06:15) | Rejected |
+| I-04 | Contained overlap | Rejected |
+| I-05 | Adjacent slot (06:00-06:30) | Accepted |
+| I-06 | OVERLAP `00:00` boundary and same-window different recurrence day | Accepted |
+| I-07 | DAILY plan over a WEEKLY weekday slot | Rejected |
+| I-08 | WEEKLY plans on non-overlapping weekdays | Accepted |
+| I-09 | Different users share 05:30-06:00 | Accepted |
+| I-10 | Updating a plan into an overlap | Rejected, original times preserved |
+| I-11 | Re-saving a plan on its own times | Accepted |
+| I-12 | Enabling a disabled overlapping plan | Rejected, plan stays disabled |
+| I-13 | Parallel policy pair with soft violations | Saved with warning, not an error |
+| I-14 | Session-defined activity without explicit times vs. explicit overlap | Rejected; adjacent to derived end accepted |
+| I-15 | Unbounded plan with other enabled exclusive plans | Rejected; accepted when alone |
+| I-16 | Explicit plan vs. existing unbounded plan | Rejected (same clock) |
+| I-17 | End time before start time | Rejected with explanation |
+| I-18 | Legacy overlapping rows inserted directly | Reported on `/jadwal`, never auto-modified |
+| I-19 | Unrelated save while an existing overlap is reported | Accepted |
+| I-20 | Two simultaneous submissions to one slot | Exactly one plan created |
+| I-21 | Four simultaneous submissions to one slot | Exactly one plan created, no duplicates |
+| I-22 | Existing pages and Today API after the change | Still render / still return JSON |
+| I-23 | Reward tables after the change | Still absent; zero XP/RP |
+
+**Why concurrency tests sign in per request:** CodeIgniter regenerates the CSRF token after each verified POST, so two simultaneous requests cannot share one token (the second would fail with 403 before reaching the validator). Each parallel request therefore uses its own signed-in session and token, while all of them target the same user's schedule. That keeps the race on the schedule-row lock, which is what the test is meant to prove.
+
+**Fixture note:** the earlier Phase 2 suite and browser check originally scheduled every activity at the same `07:00-08:00` / `07:15-07:45` slot. That is now a real conflict, so their fixtures were changed to allocate non-overlapping slots. Two later attempts to derive the slot from the activity id, and then from a hash of the activity name, produced intermittent rejections; the suite now assigns each plan the next free hour from a table in order of first use. Asserting only the `303` status of a plan POST is not sufficient either — a rejected save redirects the same way — so those checks now read the flash message and require "berhasil disimpan". The application behaviour was not weakened to make the tests pass.
+
+**Fixture note (duplicate-schedule suite):** the confirmation is rendered by the page the POST redirects to, and CodeIgniter consumes flash data on the first rendered page. The suite therefore captures the redirect target's body once and asserts both the flash text and the modal markup from that single response; a second `GET` would see neither. Successor fixtures also avoid reusing a window that a previous concurrency test may have left behind.
+
+---
+
+## 1.2 Phase 2 Duplicate Schedule & Silent Replacement Tests (P2-10)
+
+**Harness:** `phase2_duplicate_schedule_test.php` — real HTTP against `http://127.0.0.1:8080/` plus direct PDO assertions. **86 / 86 checks passed.**
+
+| ID | Scenario | Expected | Result |
+|----|----------|----------|--------|
+| DS-001 | Create a new schedule | ALLOW | PASS — one row, `session_ordinal = 0`, window stored |
+| DS-002 | Create an identical schedule | BLOCK DUPLICATE | PASS — no row created, none modified, Indonesian notice |
+| DS-003 | Same activity with a different time | SHOW CONFIRMATION | PASS — modal renders both schedules, both actions, existing plan id, **Batal** default |
+| DS-004 | Cancel replacement | KEEP ORIGINAL | PASS — id, times, `is_enabled`, `updated_at` all unchanged |
+| DS-005 | Confirm valid replacement | UPDATE | PASS — row id preserved, no new row, new window stored |
+| DS-006 | Replacement introduces a hard conflict | REJECT | PASS — original window intact; conflict-free replacement still allowed |
+| DS-007 | Add second session to ONCE_DAILY | REJECT if limits prohibit | PASS — rejected with a daily-limit message; dialog omits **Tambah Sesi** |
+| DS-008 | Add supported repeatable session | ALLOW | PASS — distinct ordinal, original intact, limit enforced, over-limit and duplicate-session rejected |
+| DS-009 | Duplicate form submission | NO DUPLICATE | PASS — one row after two identical submissions |
+| DS-010 | Unauthorized replacement attempt | REJECT | PASS — cross-user id rejected, victim row unmodified, foreign private activity unschedulable |
+| DS-011 | Concurrent replacement requests | CONSISTENT RESULT | PASS — 4 simultaneous replacements → 1 row, same id, consistent window; 4 simultaneous creates → 1 row |
+| DS-012 | Existing completion history | PRESERVED | PASS — instance survives, status preserved, occurrence identity unchanged, no instances deleted |
+| DS-013 | Repeated submission after CSRF regeneration | NO UNEXPECTED 403 | PASS — token rotates, no 403, handled as a confirmation |
+| DS-014 | Existing schedule-conflict regression tests | PASS | PASS — adjacency allowed, overlap rejected, edit-into-conflict rejected, re-enable rejected, all pages render |
+| DS-015 | XP/RP behavior | UNCHANGED | PASS — no reward tables, all instances `NOT_ELIGIBLE`, seeded XP untouched, API still JSON |
+
+**Concurrency approach:** each parallel worker signs in with its own cookie jar and obtains its own CSRF token before the simultaneous POST, because CodeIgniter rotates the token after every verified POST. All workers target the same user's plan, so the race exercises the schedule-row lock rather than the CSRF filter.
 
 ---
 
@@ -78,6 +208,8 @@ Testing follows the pyramid model: unit tests (foundation), integration tests (m
 - `tests/Integration/AppealProcessingTest.php`
 - `tests/Integration/AdminCorrectionTest.php`
 - `tests/Integration/SoftDeleteTest.php`
+
+> **Phase 2 note:** The executed Phase 2 integration harness covers the activity/catalog/plan/checklist subset only. It does not create or modify reward-ledger tables, so INT-01 and INT-03 through INT-10 remain planned for later phases.
 
 ---
 
@@ -231,6 +363,10 @@ Testing follows the pyramid model: unit tests (foundation), integration tests (m
 | AC-037 | Season Concurrency | Concurrency | ConcurrencyTest |
 | AC-038 | Pending Reward Budget | Concurrency | ConcurrencyTest |
 | AC-039 | Daily Target Fairness | Unit | StreakServiceTest |
+
+> **Phase 2 schedule conflict validation** does not map to a new PRD acceptance criterion. It strengthens AC-003 (repeatable/scheduled activity integrity) and AC-035 (timezone boundaries) for personal plans, and is verified by the unit and integration suites listed in §1.1.
+
+> **Phase 2 duplicate schedule fix** likewise maps to no new PRD acceptance criterion. It reinforces AC-003 by requiring explicit user confirmation before an existing schedule changes, and is verified by the `DS-001`–`DS-015` acceptance suite in §1.2.
 | AC-040 | Production Security | Security Review | All security tests |
 
 ---
@@ -254,6 +390,14 @@ Testing follows the pyramid model: unit tests (foundation), integration tests (m
 | NEW-13 | Concurrent budget cap enforcement | Parallel completions for different activities → daily XP (150) and RP (140) caps never exceeded | C7 — Lock ordering |
 | NEW-14 | Shield `users` FK compatibility | Verify custom table `user_id` column type matches Shield `users.id` type | C1 — Shield compatibility |
 | NEW-15 | Point correction concurrent safety | Simultaneous compensating transactions → no double reversal; original transaction preserved | C7 — Lock ordering |
+| NEW-16 | Schedule conflict classification | Identical/partial/contained exclusive overlaps → `HARD_CONFLICT`; adjacent windows → `NO_CONFLICT`; parallel violations → `SOFT_CONFLICT` | P2-09 — Schedule integrity |
+| NEW-17 | Schedule validation covers every write path | Create, update, and re-enable all run the same validation; a rejected write leaves stored times and `is_enabled` unchanged | P2-09 — Schedule integrity |
+| NEW-18 | Concurrent schedule writes | Two and four simultaneous submissions for one slot → exactly one plan, validation never bypassed | P2-09 — Schedule integrity |
+| NEW-19 | No silent schedule replacement | Resubmitting a schedule for an already-scheduled activity never changes the stored row; it returns a confirmation request | P2-10 — Duplicate schedule integrity |
+| NEW-20 | Explicit plan operations | `CREATE`, `REPLACE`, and `ADD_SESSION` behave distinctly; an unknown or missing operation is rejected rather than inferred | P2-10 — Duplicate schedule integrity |
+| NEW-21 | Cancel preserves the schedule | Cancelling a replacement leaves id, times, recurrence, `is_enabled`, and `updated_at` unchanged | P2-10 — Duplicate schedule integrity |
+| NEW-22 | Session policy enforcement | Additional sessions allowed only for eligible repeat types within their completion limits; `ONCE_DAILY` always rejected | P2-10 — Duplicate schedule integrity |
+| NEW-23 | Stale or foreign confirmation id | A confirmation naming a row that no longer exists or belongs to another user is rejected; it never falls back to another row | P2-10 — Duplicate schedule integrity |
 
 ---
 
@@ -294,8 +438,7 @@ Before any phase is considered complete:
 - UI verified (for Phase 8)
 - All acceptance criteria for that phase satisfied
 - No unresolved critical or high-severity defects
-- NEW-01 through NEW-15 design review correction tests pass
-- NEW-01 through NEW-10 design review correction tests pass
+- NEW-01 through NEW-18 design review correction tests pass
 
 ---
 
@@ -303,15 +446,15 @@ Before any phase is considered complete:
 
 | # | Decision | Options | Impact |
 |---|----------|---------|--------|
-| T1 | Browser automation | Manual UI testing vs Selenium/Playwright | Affects UI test coverage |
-| T2 | Load testing tool | Apache JMeter vs custom script vs cloud service | Affects performance test implementation |
-| T3 | Test database | Separate MySQL database vs SQLite in-memory | Affects test fidelity (MySQL-specific features like row locking need MySQL) |
-| T4 | Shield test schema | Use actual Shield migrations in test DB vs mock | Affects FK compatibility testing |
-
-These will be confirmed during Phase 0 verification.
+| T1 | Browser automation | **Resolved:** Playwright with Microsoft Edge headless | Desktop/mobile checks and screenshots executed |
+| T2 | Load testing tool | Apache JMeter vs custom script vs cloud service | Affects Phase 8 performance testing |
+| T3 | Test database | **Resolved for Phase 2:** real MySQL `lifequest_db` with dedicated test accounts; isolated database remains a Phase 8 hardening item | Current runs preserve users 1-9 and verify real MySQL constraints |
+| T4 | Shield test schema | **Resolved:** real Shield migrations and `INT UNSIGNED` user FKs | FK compatibility verified |
 
 ---
 
 ## 14. Next Step
 
-Wait for implementation approval. No test code may be written until this plan and all documentation are reviewed and approved.
+Phase 2 testing is complete. Await approval of the Phase 2 acceptance report before writing Phase 3 reward-engine tests. Phase 3 tests must cover XP/RP calculation, idempotency, lock ordering, daily caps, reward group budgets, partial rewards, and deadlock retry.
+
+**Open item:** the original Phase 2 manual acceptance test remains marked FAILED until the user re-runs it using the steps in `PHASE2_SCHEDULE_CONFLICT_REPORT.md` §8. Automated coverage for the same scenario passes (65/65), but a manual confirmation is still required.

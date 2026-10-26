@@ -1,9 +1,9 @@
 # LifeQuest — Development Tasks
 **Product:** LifeQuest — Daily Life RPG  
 **Document Version:** 2.1.0 (aligned with PRD V2.1.0, post Design Review corrections)  
-**Status:** Phase 1 Final Hardening — PASS; Awaiting Approval for Phase 2  
+**Status:** Phase 2 - Activity Management & Daily Checklist implemented (incl. schedule conflict validation and the duplicate/silent-replacement fix); awaiting approval for Phase 3  
 **Primary Documentation Language:** English  
-**Rule:** No Phase 2 implementation may begin until the Phase 1 final acceptance report is approved. Phase 0/1 statuses below reflect verified implementation; later phases remain planned.
+**Rule:** Phase 1 is verified. Phase 2 automated verification passes, but the original Phase 2 manual acceptance test is still marked FAILED pending manual retest, and the duplicate-schedule fix (P2-10) is pending manual retest as well. Phase 3 and later phases may not begin until those retests pass and this Phase 2 acceptance report is approved.
 
 ---
 
@@ -51,7 +51,7 @@ All tasks start at `PENDING`.
 | P1-06 | Initialize Git repository | Git init, .gitignore, initial commit | P1-01 | COMPLETED | Git repo initialized on `main`; `.env`, logs, cache, sessions, vendor, and private evidence excluded; initial commit created |
 | P1-07 | Create base layouts | Bootstrap 5.3.8, dark gaming theme, header/footer/navbar, Indonesian UI | P1-01 | COMPLETED | Base layout renders |
 | P1-08 | Create initial migrations | Custom domain tables only (Shield tables via Shield migrations); corrected constraints: occurrence_identity, daily_xp_totals, daily_rp_totals, daily_reward_budgets with season_id, no ON DELETE CASCADE to users, user_achievements scoped | P1-02, P1-04 | PENDING | Migrations create all custom tables with corrected constraints |
-| P1-09 | Create base controller and service classes | BaseController, BaseService, common patterns | P1-01 | PENDING | Base classes in place |
+| P1-09 | Create base controller and service classes | BaseController, BaseService, common patterns | P1-01 | COMPLETED | BaseController/BaseService in place; shared JSON/HTML helpers and service transaction conventions used by Phase 2 |
 
 ---
 
@@ -59,16 +59,58 @@ All tasks start at `PENDING`.
 
 | ID | Task | Description | Dependencies | Status | Acceptance Criteria |
 |----|------|-------------|--------------|--------|---------------------|
-| P2-01 | Create activity categories | 10 default categories (Morning, Hygiene, Nutrition, Fitness, Productivity, Learning, Household, Social, Evening, Sleep) | P1-09 | PENDING | Categories seeded and queryable |
-| P2-02 | Create reward groups | 10 reward groups + Streak with daily RP budgets (total 140 RP) | P1-09 | PENDING | Reward groups seeded with budgets |
-| P2-03 | Create activity catalog | Standard activities with codes, names, XP, RP, verification policies | P2-01, P2-02 | PENDING | Activity catalog populated |
-| P2-04 | Create activity sessions | Fixed sessions per activity (morning/evening) with XP/RP values | P2-03 | PENDING | Sessions configured per activity |
-| P2-05 | Implement repeatable activity types | ONCE_DAILY, FIXED_SESSIONS, REPEATABLE, WEEKLY logic | P2-03, P2-04 | PENDING | Repeat types enforced server-side |
-| P2-06 | Create user activity plans | Personal schedules, recurrence rules, timezone support | P2-03 | PENDING | Users can create activity plans |
-| P2-07 | Generate daily activity instances | From activity plans, with non-null `occurrence_identity` (server-generated), `activity_date`, `competition_date`, `season_id` | P2-06 | PENDING | Daily instances generated correctly; occurrence_identity prevents duplicate completions |
-| P2-08 | Build daily checklist UI | Indonesian UI, activity name, category, schedule, XP/RP, verification method, completion state | P2-07 | PENDING | Checklist page renders correctly |
+| P2-01 | Create activity categories | 10 default categories (Morning, Hygiene, Nutrition, Fitness, Productivity, Learning, Household, Social, Evening, Sleep) | P1-09 | COMPLETED | 10 categories seeded idempotently and queryable; verified by seed-count and catalog tests |
+| P2-02 | Create reward groups | 10 reward groups + Streak with daily RP budgets (total 140 RP) | P1-09 | COMPLETED | 11 groups seeded with `default_daily_rp_budget`; budget total 140 RP; no reward engine implemented |
+| P2-03 | Create activity catalog | Standard activities with codes, names, XP, RP, verification policies | P2-01, P2-02 | COMPLETED | 10 standard activities seeded; catalog, search, category filter, detail, and ownership tests pass |
+| P2-04 | Create activity sessions | Fixed sessions per activity (morning/evening) with XP/RP values | P2-03 | COMPLETED | 2 fixed sessions seeded for the fixed-session activity; DB uniqueness on `(activity_id, session_code)` |
+| P2-05 | Implement repeatable activity types | ONCE_DAILY, FIXED_SESSIONS, REPEATABLE, WEEKLY logic | P2-03, P2-04 | COMPLETED | All repeat types enforced server-side; occurrence identity, cooldown, daily/weekly limits, and fixed-session uniqueness verified |
+| P2-06 | Create user activity plans | Personal schedules, recurrence rules, timezone support | P2-03 | COMPLETED | Plans support DAILY/WEEKDAYS/WEEKLY/CUSTOM_DAYS, timezone, preferred times, and enable/disable; validated in integration tests |
+| P2-07 | Generate daily activity instances | From activity plans, with non-null `occurrence_identity` (server-generated), `activity_date`, `competition_date`, `season_id` | P2-06 | COMPLETED | Instances generate idempotently; unique occurrence identity prevents duplicates; `season_id` remains null in Phase 2 |
+| P2-08 | Build daily checklist UI | Indonesian UI, activity name, category, schedule, XP/RP, verification method, completion state | P2-07 | COMPLETED | Dashboard, catalog, plans, checklist, history, forms, and API render; AJAX completion and desktop/mobile responsive checks pass |
+| P2-09 | Add schedule conflict validation | Reject overlapping active schedules per user; half-open local-time intervals; activity compatibility policy; server-side validation on create, update, and re-enable; concurrent-write serialization; non-destructive reporting of existing overlaps | P2-06 | COMPLETED | HARD_CONFLICT rejected, SOFT_CONFLICT saved with a warning, NO_CONFLICT accepted; adjacent schedules allowed; per-user isolation; simultaneous submissions cannot bypass validation; see `PHASE2_SCHEDULE_CONFLICT_REPORT.md` |
+| P2-10 | Fix silent schedule replacement | Never overwrite an existing schedule without explicit confirmation; explicit CREATE/REPLACE/ADD_SESSION operations; duplicate detection; confirmation dialog with Batal as the default; session support for eligible activities; stale-confirmation and concurrency protection | P2-06, P2-09 | COMPLETED | Identical schedules blocked without a record change; differing schedules confirmed before any write; cancel preserves the row untouched; confirmed replacement preserves the row id and re-validates all conflicts; ONCE_DAILY additional sessions rejected; see `PHASE2_DUPLICATE_SCHEDULE_FIX_REPORT.md` |
 
 **Phase 2 Acceptance Criteria Coverage:** AC-003, AC-007, AC-035, AC-036, AC-039
+
+> **P2-09 scope note:** Schedule conflict validation is a Phase 2 enhancement requested after the original Phase 2 implementation report. It is documented in `PHASE2_SCHEDULE_CONFLICT_REPORT.md` rather than as a PRD revision; no PRD requirement was reinterpreted or relaxed. XP/RP behaviour is unchanged (Phase 2 still awards zero XP/RP).
+
+> **P2-10 scope note:** The duplicate-schedule fix is a Phase 2 manual-acceptance defect fix. It is documented in `PHASE2_DUPLICATE_SCHEDULE_FIX_REPORT.md` rather than as a PRD revision. Duplicate detection, confirmation, and explicit operations are new behaviour that no PRD requirement contradicted; ONCE_DAILY completion limits were preserved exactly as configured.
+
+### Phase 2 Implementation Notes
+
+- Additive migrations only: `2026-10-23-100000_CreateActivityCatalogTables` and `2026-10-23-100100_CreateActivityPlanningTables`. Shield tables and existing users were not modified.
+- `users.id` was verified as `INT UNSIGNED`; custom user foreign keys use the same type and `ON DELETE RESTRICT` (NO ACTION), not CASCADE.
+- `daily_activity_instances.occurrence_identity` is `NOT NULL` with a database unique key. Fixed sessions, repeatable occurrences, and ISO-week keys are included in the identity.
+- `seasons` exists only as a minimal forward-compatible FK target. No season rows, lifecycle transitions, or season resets were implemented.
+- Phase 2 deliberately has no `point_transactions`, `daily_xp_totals`, `daily_rp_totals`, `daily_reward_budgets`, `user_lifetime_stats`, or `user_season_stats`. Completions record `reward_status = NOT_ELIGIBLE` and zero XP/RP.
+- The `TIMER` policy in Phase 2 records `PENDING` verification on completion for forward compatibility; the actual timer capture, evidence, review, and reward engines remain Phase 3/4 work.
+- Custom activities are limited to `ONCE_DAILY`, `REPEATABLE`, and `WEEKLY`; `FIXED_SESSIONS` remains administrator-seeded.
+- **P2-09 additive migration:** `2026-10-26-090000_AddActivitySchedulePolicy` adds `activities.schedule_policy` (`VARCHAR(20) NOT NULL DEFAULT 'EXCLUSIVE'`) plus `idx_activities_schedule_policy`. Defaulting to `EXCLUSIVE` preserves the pre-enhancement behaviour for every existing activity: overlaps were previously allowed silently, and are now rejected instead.
+- **P2-10 additive migration:** `2026-10-26-140000_AddPlanSessionOrdinal` adds `user_activity_plans.session_ordinal` (`TINYINT UNSIGNED NOT NULL DEFAULT 0`) and replaces the unique key `uk_uap_user_activity (user_id, activity_id)` with `uk_uap_user_activity_session (user_id, activity_id, session_ordinal)`. Every pre-existing row keeps ordinal `0`, so no schedule changed. This removes the constraint that caused the silent replacement. `down()` refuses to run while any activity holds more than one session, so a rollback cannot silently delete schedules.
+
+### Phase 2 Manual Acceptance Status
+
+| Test | Result | Notes |
+|------|--------|-------|
+| Original Phase 2 manual acceptance test (as reported in `PHASE2_IMPLEMENTATION_REPORT.md`) | **FAILED** | Failed on real use: two active schedules for the same user could overlap with no warning. The defect is fixed by P2-09, but this row stays FAILED until the user re-runs the manual test. |
+| Original manual acceptance test, re-run for schedule conflict validation | PASSED in the automated HTTP harness (65/65), **pending manual retest** | Acceptance steps are in `PHASE2_SCHEDULE_CONFLICT_REPORT.md` §8. |
+| Manual acceptance test for the silent schedule replacement defect | **PENDING MANUAL RETEST** | Defect reproduced and fixed by P2-10; automated suite passes 86/86 and the full regression battery is green. Manual steps are in `PHASE2_DUPLICATE_SCHEDULE_FIX_REPORT.md` §9. |
+
+### Phase 2 Verification Summary
+
+| Verification | Result |
+|--------------|--------|
+| Phase 2 integration suite | 170/170 checks passed, 8 consecutive runs |
+| Phase 2 duplicate schedule acceptance suite (`DS-001`–`DS-015`) | 86/86 checks passed |
+| Phase 2 schedule conflict unit suite (resolver) | 25/25 checks passed |
+| Phase 2 schedule conflict integration suite (HTTP + MySQL, incl. 2-way and 4-way races) | 65/65 checks passed |
+| Phase 2 desktop/mobile browser suite | 42/42 checks passed; 14 screenshots captured |
+| Phase 2 JSON API checks | 7/7 checks passed |
+| Phase 2 schema verification (`schedule_policy` column, index, plan/instance counts, users 1-9) | Passed |
+| Phase 1 authentication hardening regression | 37/37 checks passed |
+| Phase 1 rate-limit regression | 13/13 checks passed |
+| Phase 1 responsive regression | 18/18 checks passed |
+| PHP syntax check | All `app/` PHP files passed |
 
 ---
 
@@ -224,4 +266,4 @@ A task is complete only when (PRD Section 32):
 
 ## 13. Next Step
 
-Phase 1 final hardening is complete. Await stakeholder approval of the Phase 1 acceptance report before beginning any Phase 2 work.
+Phase 2 - Activity Management & Daily Checklist is implemented and verified. Await stakeholder approval before starting Phase 3 (Reward Engine). Phase 3 must not begin, and no XP/RP reward processing may be added, until this Phase 2 acceptance report is approved.
